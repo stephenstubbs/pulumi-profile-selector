@@ -133,14 +133,14 @@ Add these functions and hooks to your nushell config (`~/.config/nushell/config.
 
 #### Option 1: Using --wrapped flag (Recommended for Nushell 0.91.0+)
 ```nu
-def --env --wrapped pulumisp [...args] {
+def --env --wrapped pulumips [...args] {
     # Check if -c or --current is in the arguments
     let is_current = ($args | any {|arg| $arg == "-c" or $arg == "--current"})
-    
+
     if $is_current {
         # Interactive mode with -c: run and capture output to set env var
         let cmd = (^pulumi-profile-selector ...$args | str trim)
-        
+
         if ($cmd | is-not-empty) {
             if ($cmd | str contains '$env.PULUMI_BACKEND_URL') {
                 # Extract the backend URL from: $env.PULUMI_BACKEND_URL = "backend-url"
@@ -169,18 +169,18 @@ def --env --wrapped pulumisp [...args] {
 }
 
 # Usage examples:
-# pulumisp                      # Interactive selection (writes to file, hooks handle it)
-# pulumisp -a dev              # Activate 'dev' profile (writes to file, hooks handle it)
-# pulumisp -d                  # Deactivate profile (removes file, hooks handle it)
-# pulumisp -c                  # Interactive selection for current shell only
-# pulumisp -c -a dev           # Activate 'dev' for current shell only
-# pulumisp -c -d               # Deactivate for current shell only
-# pulumisp --current -n custom # Set custom profile for current shell only
-# pulumisp --help              # Show help for pulumi-profile-selector
-# pulumisp --add               # Add a new profile
-# pulumisp --edit dev          # Edit dev profile
-# pulumisp --delete old        # Delete old profile
-# pulumisp -l                  # List all profiles
+# pulumips                      # Interactive selection (writes to file, hooks handle it)
+# pulumips -a dev              # Activate 'dev' profile (writes to file, hooks handle it)
+# pulumips -d                  # Deactivate profile (removes file, hooks handle it)
+# pulumips -c                  # Interactive selection for current shell only
+# pulumips -c -a dev           # Activate 'dev' for current shell only
+# pulumips -c -d               # Deactivate for current shell only
+# pulumips --current -n custom # Set custom profile for current shell only
+# pulumips --help              # Show help for pulumi-profile-selector
+# pulumips --add               # Add a new profile
+# pulumips --edit dev          # Edit dev profile
+# pulumips --delete old        # Delete old profile
+# pulumips -l                  # List all profiles
 ```
 
 **Note:** The `--wrapped` flag allows the function to receive all arguments without Nushell intercepting flags like `--help`. This provides seamless pass-through of all arguments to the underlying `pulumi-profile-selector` command.
@@ -193,17 +193,15 @@ def --env load_pulumi_profile [] {
     }
 
     let current_profile_file = ([$env.HOME ".pulumi" "current_profile"] | path join)
+    let profiles_file = ([$env.HOME ".pulumi" "profiles.json"] | path join)
 
-    if ($current_profile_file | path exists) {
+    if ($current_profile_file | path exists) and ($profiles_file | path exists) {
         let profile_name = (open $current_profile_file | str trim)
         if ($profile_name | is-not-empty) {
-            let profiles_file = ([$env.HOME ".pulumi" "profiles.json"] | path join)
-            if ($profiles_file | path exists) {
-                let profiles = (open $profiles_file | from json)
-                let profile = ($profiles | where name == $profile_name | first)
-                if ($profile | is-not-empty) {
-                    $env.PULUMI_BACKEND_URL = $profile.backend
-                }
+            let profiles = (open $profiles_file)
+            let profile = ($profiles | where name == $profile_name | first)
+            if ($profile | is-not-empty) {
+                $env.PULUMI_BACKEND_URL = $profile.backend
             }
         }
     } else {
@@ -234,7 +232,7 @@ This configuration will:
 - **Automatically load the Pulumi profile** when nushell starts
 - **Re-load the Pulumi profile** every time you change directories (`cd`)
 - **Re-load the Pulumi profile** before each prompt is displayed
-- **Provide the `pulumisp` command** for interactive profile selection and management
+- **Provide the `pulumips` command** for interactive profile selection and management
 
 
 ## How It Works
