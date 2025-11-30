@@ -28,7 +28,7 @@
           system:
           f {
             pkgs = import nixpkgs {
-              inherit system;
+              localSystem = system;
               overlays = [
                 rust-overlay.overlays.default
                 self.overlays.default
