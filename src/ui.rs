@@ -1,66 +1,39 @@
-use crate::config::Profile;
-use anyhow::Result;
-use inquire::{InquireError, Select, Text};
+use anyhow::{Context, Result};
+use inquire::{InquireError, Select, Text, validator::Validation};
 
-pub struct ProfileSelector {
-    profiles: Vec<Profile>,
-}
+use crate::config::{Profile, validate_value};
 
-impl ProfileSelector {
-    pub fn new(profiles: Vec<Profile>) -> Self {
-        Self { profiles }
-    }
-
-    pub fn run(&mut self) -> Result<Option<String>> {
-        if self.profiles.is_empty() {
-            return Ok(None);
-        }
-
-        let options: Vec<String> = self.profiles.iter().map(format_profile_display).collect();
-
-        let ans = Select::new("Select Pulumi Profile:", options)
-            .with_page_size(10)
-            .with_help_message("↑↓ to move, enter to select, type to filter")
-            .prompt();
-
-        match ans {
-            Ok(selected_display) => {
-                // Find the profile that matches the selected display string
-                let selected_profile = self
-                    .profiles
-                    .iter()
-                    .find(|profile| format_profile_display(profile) == selected_display)
-                    .map(|profile| profile.name.clone());
-
-                Ok(selected_profile)
-            }
-            Err(InquireError::OperationCanceled) => Ok(None),
-            Err(InquireError::OperationInterrupted) => Ok(None),
-            Err(e) => Err(anyhow::anyhow!("Selection failed: {}", e)),
-        }
+pub fn select_profile(profiles: &[Profile]) -> Result<Option<&Profile>> {
+    match Select::new("Select Pulumi Profile:", profiles.iter().collect())
+        .with_page_size(10)
+        .prompt_skippable()
+    {
+        Ok(profile) => Ok(profile),
+        Err(InquireError::OperationInterrupted) => Ok(None),
+        Err(error) => Err(error).context("Profile selection failed"),
     }
 }
 
-pub fn prompt_for_profile_details() -> Result<(String, String)> {
+pub fn prompt_for_profile_details() -> Result<Profile> {
     let name = Text::new("Profile name:")
         .with_help_message("Enter a unique name for this profile")
+        .with_validator(|input: &str| Ok(validation(input, "Profile name")))
         .prompt()?;
-
-    let backend = Text::new("Backend URL:")
-        .with_help_message("e.g., s3://my-bucket/state, file://./state, https://api.pulumi.com")
-        .prompt()?;
-
-    Ok((name, backend))
+    let backend = prompt_for_backend_url("")?;
+    Profile::new(name, backend)
 }
 
-pub fn prompt_for_backend_url() -> Result<String> {
-    let backend = Text::new("New backend URL:")
+pub fn prompt_for_backend_url(default: &str) -> Result<String> {
+    Ok(Text::new("Backend URL:")
         .with_help_message("e.g., s3://my-bucket/state, file://./state, https://api.pulumi.com")
-        .prompt()?;
-
-    Ok(backend)
+        .with_initial_value(default)
+        .with_validator(|input: &str| Ok(validation(input, "Backend URL")))
+        .prompt()?)
 }
 
-fn format_profile_display(profile: &Profile) -> String {
-    format!("{} -> {}", profile.name, profile.backend)
+fn validation(value: &str, label: &str) -> Validation {
+    match validate_value(value, label) {
+        Ok(()) => Validation::Valid,
+        Err(error) => Validation::Invalid(error.to_string().into()),
+    }
 }

@@ -1,276 +1,180 @@
 # Pulumi Profile Selector
 
-A fast, interactive Pulumi profile selector CLI tool built in Rust.
+An inline, fuzzy-searchable CLI for selecting and managing Pulumi backend profiles.
+Supports Linux and macOS through Nix, with shell output for Nushell, Fish, and
+POSIX shells.
 
-## Features
-
-- 🔍 **Fuzzy search** through Pulumi profiles
-- ⚡ **Fast inline interface** - no full-screen takeover
-- 🎯 **Arrow key navigation**
-- 📦 **Single binary** with no runtime dependencies
-- 🔧 **Profile management** - add, edit, and delete profiles
+Nix targets are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
+Current nixpkgs no longer provides an Intel macOS (`x86_64-darwin`) stdenv.
 
 ## Installation
 
-### Option 1: Direct Installation with Nix Profile
-```bash
-# Install directly from GitHub
-nix profile install github:stephenstubbs/pulumi-profile-selector
-
-# Verify installation
+```sh
+nix profile add github:stephenstubbs/pulumi-profile-selector
 pulumi-profile-selector --help
 ```
 
-### Option 2: Run Without Installing
-```bash
-# Run directly from GitHub
+Or run without installing:
+
+```sh
 nix run github:stephenstubbs/pulumi-profile-selector -- --help
 ```
 
-### Option 3: Add to Your Flake
-Add to `flake.nix` inputs:
+To include it in another flake:
+
 ```nix
 {
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    pulumi-profile-selector = {
-      url = "github:stephenstubbs/pulumi-profile-selector";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+  inputs.pulumi-profile-selector = {
+    url = "github:stephenstubbs/pulumi-profile-selector";
+    inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, pulumi-profile-selector, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-    in
-    {
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [
-          pulumi-profile-selector.packages.${system}.default
-        ];
-      };
-    };
+  # In your package list, for the appropriate system:
+  # inputs.pulumi-profile-selector.packages.${system}.default
 }
 ```
 
-### Option 4: Development Environment
-```bash
-# Clone and enter development environment
-git clone https://github.com/stephenstubbs/pulumi-profile-selector
-cd pulumi-profile-selector
-nix develop
+Without Nix, use Rust 1.89 or newer:
 
-# Build and run
-cargo build --release
-./target/release/pulumi-profile-selector --help
+```sh
+cargo install --path . --locked
 ```
 
 ## Usage
 
-### Direct Usage
+```sh
+pulumi-profile-selector                       # Interactive selection
+pulumi-profile-selector --activate dev        # Activate a saved profile
+pulumi-profile-selector --new s3://other-state # Use an unsaved backend
+pulumi-profile-selector --deactivate          # Clear the persisted selection
+pulumi-profile-selector --show-current        # Print the persisted backend URL
 
-Run the selector directly:
-```bash
-./target/release/pulumi-profile-selector
+pulumi-profile-selector --add                 # Create a profile interactively
+pulumi-profile-selector --edit dev            # Change its backend URL
+pulumi-profile-selector --delete dev          # Also clears its persisted selection
+pulumi-profile-selector --list
 ```
 
-**Interactive Mode (default):**
-```bash
-pulumi-profile-selector                    # Interactive selection
+Short options: `-a` activate, `-n` new, `-d` deactivate, `-c` current, `-l` list.
+Actions are mutually exclusive. Use arrow keys to navigate, type to filter,
+Enter to select, or Esc/Ctrl-C to cancel. Cancellation exits unsuccessfully
+without changing the selection.
+
+### Current shell only
+
+`--current` prints a shell command without changing persisted state. A child
+process cannot directly change its parent shell's environment.
+
+```sh
+# Bash / Zsh / POSIX shell
+eval "$(pulumi-profile-selector --current --activate dev --shell posix)"
+eval "$(pulumi-profile-selector --current --deactivate --shell posix)"
 ```
 
-**Direct Profile Activation:**
-```bash
-pulumi-profile-selector -a dev             # Activate 'dev' profile directly
-pulumi-profile-selector --activate prod    # Activate 'prod' profile directly
+Shell syntax is detected from the `SHELL` environment variable; use
+`--shell posix`, `--shell fish`, or `--shell nu` to override the login shell.
+Backend values are quoted literally, including shell metacharacters. JSON
+output takes precedence over `--shell`.
+
+For integrations, prefer structured output instead of parsing shell commands:
+
+```sh
+pulumi-profile-selector --current --activate dev --json
+# {"backend":"s3://pulumi-state-dev"}
+
+pulumi-profile-selector --current --deactivate --json
+# {"backend":null}
+
+pulumi-profile-selector --show-current --json
+# {"backend":"s3://pulumi-state-dev"} (or null when inactive)
 ```
 
-**Set New Profile (not in profiles.json):**
-```bash
-pulumi-profile-selector -n custom          # Set 'custom' profile (even if not in profiles.json)
-pulumi-profile-selector --new temp-profile # Set 'temp-profile' profile
-```
+### Nushell integration
 
-**Deactivate Profile:**
-```bash
-pulumi-profile-selector -d                 # Deactivate PULUMI_BACKEND_URL
-pulumi-profile-selector --deactivate       # Deactivate PULUMI_BACKEND_URL
-```
+Keep this checkout available and add the module to `config.nu` using its
+absolute path:
 
-**Set Profile for Current Shell Only:**
-```bash
-# For current shell session only (doesn't write to ~/.pulumi/current_profile)
-pulumi-profile-selector -c                 # Interactive selection, outputs shell command
-pulumi-profile-selector -c -a dev          # Outputs: $env.PULUMI_BACKEND_URL = "s3://..."
-pulumi-profile-selector -c -n custom       # Outputs: $env.PULUMI_BACKEND_URL = "custom"
-pulumi-profile-selector -c -d              # Outputs: hide-env PULUMI_BACKEND_URL
-```
-
-**Profile Management:**
-```bash
-pulumi-profile-selector --add              # Add a new profile interactively
-pulumi-profile-selector --edit dev         # Edit 'dev' profile's backend URL
-pulumi-profile-selector --delete old       # Delete 'old' profile
-pulumi-profile-selector -l                 # List all profiles
-pulumi-profile-selector --list             # List all profiles
-```
-
-**Options:**
-- `-a, --activate <PROFILE>`: Activate a specific profile by name (skips interactive selection)
-- `-n, --new <PROFILE>`: Set a profile name that is not available in the list
-- `-c, --current`: Output shell commands for current shell only (doesn't write to file)
-- `-d, --deactivate`: Deactivate PULUMI_BACKEND_URL
-- `--add`: Add a new profile interactively
-- `--edit <PROFILE>`: Edit an existing profile's backend URL
-- `--delete <PROFILE>`: Delete a profile
-- `-l, --list`: List all profiles
-
-### Shell Integration (Nushell)
-
-Add these functions and hooks to your nushell config (`~/.config/nushell/config.nu`):
-
-#### Option 1: Using --wrapped flag (Recommended for Nushell 0.91.0+)
 ```nu
-def --env --wrapped pulumips [...args] {
-    # Check if -c or --current is in the arguments
-    let is_current = ($args | any {|arg| $arg == "-c" or $arg == "--current"})
+use /path/to/pulumi-profile-selector/shell/pulumi.nu *
 
-    if $is_current {
-        # Interactive mode with -c: run and capture output to set env var
-        let cmd = (^pulumi-profile-selector ...$args | str trim)
-
-        if ($cmd | is-not-empty) {
-            if ($cmd | str contains '$env.PULUMI_BACKEND_URL') {
-                # Extract the backend URL from: $env.PULUMI_BACKEND_URL = "backend-url"
-                let parts = ($cmd | parse '$env.PULUMI_BACKEND_URL = "{backend}"')
-                if ($parts | length) > 0 {
-                    let backend = ($parts | first | get backend)
-                    $env.PULUMI_BACKEND_URL = $backend
-                    $env.PULUMI_BACKEND_URL_CURRENT_SHELL = "true"
-                    print $"PULUMI_BACKEND_URL set to ($backend) for current shell"
-                }
-            } else if ($cmd == 'hide-env PULUMI_BACKEND_URL') {
-                hide-env PULUMI_BACKEND_URL
-                if "PULUMI_BACKEND_URL_CURRENT_SHELL" in $env {
-                    hide-env PULUMI_BACKEND_URL_CURRENT_SHELL
-                }
-                print "PULUMI_BACKEND_URL unset for current shell"
-            }
-        }
-    } else {
-        # Non-current mode: clear current shell flag and pass through
-        if "PULUMI_BACKEND_URL_CURRENT_SHELL" in $env {
-            hide-env PULUMI_BACKEND_URL_CURRENT_SHELL
-        }
-        ^pulumi-profile-selector ...$args
-    }
-}
-
-# Usage examples:
-# pulumips                      # Interactive selection (writes to file, hooks handle it)
-# pulumips -a dev              # Activate 'dev' profile (writes to file, hooks handle it)
-# pulumips -d                  # Deactivate profile (removes file, hooks handle it)
-# pulumips -c                  # Interactive selection for current shell only
-# pulumips -c -a dev           # Activate 'dev' for current shell only
-# pulumips -c -d               # Deactivate for current shell only
-# pulumips --current -n custom # Set custom profile for current shell only
-# pulumips --help              # Show help for pulumi-profile-selector
-# pulumips --add               # Add a new profile
-# pulumips --edit dev          # Edit dev profile
-# pulumips --delete old        # Delete old profile
-# pulumips -l                  # List all profiles
+$env.config.hooks.pre_prompt = (
+    $env.config.hooks.pre_prompt | append {|| load_pulumi_profile}
+)
 ```
 
-**Note:** The `--wrapped` flag allows the function to receive all arguments without Nushell intercepting flags like `--help`. This provides seamless pass-through of all arguments to the underlying `pulumi-profile-selector` command.
+This appends a hook without replacing other hooks. The single pre-prompt hook
+also covers directory changes, so a separate `PWD` hook is unnecessary.
 
-#### Option 2: Persistent Profile (File-based)
 ```nu
-def --env load_pulumi_profile [] {
-    if "PULUMI_BACKEND_URL_CURRENT_SHELL" in $env {
-        return
-    }
-
-    let current_profile_file = ([$env.HOME ".pulumi" "current_profile"] | path join)
-    let profiles_file = ([$env.HOME ".pulumi" "profiles.json"] | path join)
-
-    if ($current_profile_file | path exists) and ($profiles_file | path exists) {
-        let profile_name = (open $current_profile_file | str trim)
-        if ($profile_name | is-not-empty) {
-            let profiles = (open $profiles_file)
-            let profile = ($profiles | where name == $profile_name | first)
-            if ($profile | is-not-empty) {
-                $env.PULUMI_BACKEND_URL = $profile.backend
-            }
-        }
-    } else {
-        if "PULUMI_BACKEND_URL" in $env {
-            hide-env PULUMI_BACKEND_URL
-        }
-    }
-}
-
-# Set up hooks to automatically load Pulumi profile
-$env.config = ($env.config | upsert hooks {
-    pre_prompt: [
-        { ||
-            load_pulumi_profile
-        }
-    ]
-    env_change: {
-        PWD: [
-            { |before, after|
-                load_pulumi_profile
-            }
-        ]
-    }
-})
+pulumips -a dev          # Persist and immediately load dev
+pulumips -c -a prod      # Override only this shell
+pulumips -c -d           # Unset only this shell, including subsequent prompts
+pulumips -n file://./state
+pulumips -d
+pulumips --help
 ```
 
-This configuration will:
-- **Automatically load the Pulumi profile** when nushell starts
-- **Re-load the Pulumi profile** every time you change directories (`cd`)
-- **Re-load the Pulumi profile** before each prompt is displayed
-- **Provide the `pulumips` command** for interactive profile selection and management
+The wrapper and hook use JSON to preserve backend values exactly. A current-shell
+override is a snapshot of the backend URL, independent of saved profiles.
+Listing, editing, or deleting profiles does not change that snapshot. It survives
+prompt reloads until `pulumips -c -d` unsets it or a persistent
+activation/deactivation through `pulumips` resumes saved-state loading.
 
+## Profile files
 
-## How It Works
-
-1. **Reads your Pulumi profiles** from `~/.pulumi/profiles.json`
-2. **Parses profile entries** and extracts name and backend URL
-3. **Presents an interactive list** with fuzzy search capabilities
-4. **Stores the selected profile** in `~/.pulumi/current_profile`
-5. **Nushell integration** reads this file to set `$env.PULUMI_BACKEND_URL`
-
-## Interface
-
-- **↑/↓ arrows**: Navigate through profiles
-- **Type**: Filter profiles with fuzzy search (no need to press `/`)
-- **Enter**: Select the highlighted profile
-- **Esc/q**: Cancel and exit
-
-## Pulumi Profiles Format
-
-The tool manages profiles in `~/.pulumi/profiles.json`. Example:
+Files live in `$PULUMI_HOME`, or `~/.pulumi` when it is unset or empty.
+`profiles.json` is an array:
 
 ```json
 [
-  {
-    "name": "dev",
-    "backend": "s3://pulumi-state-dev"
-  },
-  {
-    "name": "prod",
-    "backend": "s3://pulumi-state-prod"
-  },
-  {
-    "name": "local",
-    "backend": "file://./state"
-  }
+  {"name": "dev", "backend": "s3://pulumi-state-dev"},
+  {"name": "prod", "backend": "s3://pulumi-state-prod"},
+  {"name": "local", "backend": "file://./state"}
 ]
+```
+
+`current_profile` contains the selected profile name as plain text. `--new`
+can also store a raw backend URL or unsaved name; the integration resolves a
+saved name to its backend and otherwise uses the stored value literally.
+Both files remain compatible with earlier versions.
+
+Names must be unique. Names and backends must be nonempty, with no control
+characters or leading/trailing whitespace. Read-only commands do not create
+configuration files. Writes replace files atomically rather than truncating
+them; invalid JSON is reported instead of being silently replaced.
+
+These profiles are managed by this tool, not Pulumi's credentials file.
+Persistent selection takes effect through shell integration, not by modifying
+the Pulumi CLI's login state.
+
+## Development
+
+From a checkout:
+
+```sh
+direnv allow
+direnv reload
+cargo build --locked
+cargo fmt --all --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
+cargo deny --locked check
+cargo machete
+nu --no-config-file tests/nushell.nu target/debug/pulumi-profile-selector
+nix flake check
+```
+
+The flake uses the same latest stable Rust toolchain for development and
+packaging. Its lockfile pins that toolchain and Nix packages reproducibly.
+To refresh dependencies deliberately:
+
+```sh
+nix flake update
+direnv reload
+cargo upgrade --incompatible
+cargo update
 ```
 
 ## License
 
-MIT License
+MIT
