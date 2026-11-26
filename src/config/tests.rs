@@ -7,6 +7,7 @@ use crate::config::{Profile, ProfileStore};
 mod activation;
 mod crud;
 mod errors;
+mod selection;
 mod validation;
 
 /// Store rooted in a fresh temporary directory, kept alive by the `TempDir`.

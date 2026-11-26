@@ -1,64 +1,9 @@
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+mod support;
+
+use std::{fs, process::Command};
 
 use serde_json::{Value, json};
-use tempfile::TempDir;
-
-struct Fixture {
-    home: TempDir,
-    root: PathBuf,
-}
-
-impl Fixture {
-    fn new() -> Self {
-        let home = tempfile::tempdir().unwrap();
-        let root = home.path().join("pulumi");
-        Self { home, root }
-    }
-
-    fn profiles(&self, value: Value) {
-        fs::create_dir_all(&self.root).unwrap();
-        fs::write(self.root.join("profiles.json"), value.to_string()).unwrap();
-    }
-
-    fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pulumi-profile-selector"));
-        command
-            .env("HOME", self.home.path())
-            .env("USERPROFILE", self.home.path())
-            .env("PULUMI_HOME", &self.root)
-            .env("SHELL", "/gnu/bin/bash");
-        command
-    }
-
-    fn run(&self, args: &[&str]) -> Output {
-        self.command().args(args).output().unwrap()
-    }
-
-    fn success(&self, args: &[&str]) -> String {
-        let output = self.run(args);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap()
-    }
-
-    fn failure(&self, args: &[&str]) -> String {
-        let output = self.run(args);
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        String::from_utf8(output.stderr).unwrap()
-    }
-
-    fn saved(&self) -> String {
-        fs::read_to_string(self.root.join("current_profile")).unwrap()
-    }
-}
+use support::Fixture;
 
 fn profiles() -> Value {
     json!([

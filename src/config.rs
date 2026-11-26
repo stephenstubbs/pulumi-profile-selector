@@ -43,6 +43,14 @@ impl fmt::Display for Profile {
     }
 }
 
+/// A resolved non-secret selection. `profile` is set only when the value is a
+/// saved profile name; raw backends stay unnamed even when URLs coincide.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Selection {
+    pub profile: Option<String>,
+    pub backend: Option<String>,
+}
+
 /// Validate a single-line value without rejecting literal shell metacharacters.
 pub fn validate_value(value: &str, label: &str) -> Result<()> {
     if value.trim().is_empty() {
@@ -174,14 +182,40 @@ impl ProfileStore {
     /// known profile name are returned unchanged, which supports backends
     /// activated with `--new`.
     pub fn current_backend(&self) -> Result<Option<String>> {
-        let Some(active) = self.read_current()? else {
-            return Ok(None);
-        };
+        Ok(self.current_selection()?.backend)
+    }
 
-        Ok(Some(match self.read()?.iter().find(|p| p.name == active) {
-            Some(profile) => profile.backend.clone(),
-            None => active,
-        }))
+    /// Resolve the active value to profile identity plus backend URL.
+    pub fn current_selection(&self) -> Result<Selection> {
+        match self.read_current()? {
+            Some(active) => self.match_saved(&active),
+            None => Ok(Selection::default()),
+        }
+    }
+
+    /// Resolve an explicit activation value to profile identity plus backend.
+    pub fn resolve_selection(&self, value: &str) -> Result<Selection> {
+        validate_value(value, "Profile name or backend URL")?;
+        self.match_saved(value)
+    }
+
+    fn match_saved(&self, value: &str) -> Result<Selection> {
+        Ok(
+            match self
+                .read()?
+                .into_iter()
+                .find(|profile| profile.name == value)
+            {
+                Some(profile) => Selection {
+                    profile: Some(profile.name),
+                    backend: Some(profile.backend),
+                },
+                None => Selection {
+                    profile: None,
+                    backend: Some(value.to_owned()),
+                },
+            },
+        )
     }
 
     fn read_current(&self) -> Result<Option<String>> {

@@ -40,6 +40,10 @@ Without Nix, use Rust 1.89 or newer:
 cargo install --path . --locked
 ```
 
+Packages expose `pulumiProfileContextVersion = 1` as non-secret capability
+metadata. Consumers can use the native context protocol and shell modules
+without reapplying a legacy compatibility patch.
+
 ## Usage
 
 ```sh
@@ -60,6 +64,26 @@ Actions are mutually exclusive. Use arrow keys to navigate, type to filter,
 Enter to select, or Esc/Ctrl-C to cancel. Cancellation exits unsuccessfully
 without changing the selection.
 
+### Profile identity context
+
+`--context` adds the saved profile name to backend output, so two profiles that
+point at the same backend stay distinguishable. It is opt-in: without it every
+existing output keeps its previous shape.
+
+```sh
+pulumi-profile-selector --show-current --context --json
+# {"profile":"company-a","backend":"https://api.pulumi.com"}
+pulumi-profile-selector --show-current --context --json   # raw backend selection
+# {"profile":null,"backend":"https://api.pulumi.com"}
+pulumi-profile-selector --show-current --context --json   # nothing active
+# {"profile":null,"backend":null}
+```
+
+`profile` is a saved profile name or `null`. A raw backend stays unnamed even
+when its URL equals a saved profile's backend; identity is never inferred from
+the URL. `--context` works with `--current`, `--show-current`, explicit
+selection, interactive selection, `--new`, and current-shell deactivation.
+
 ### Current shell only
 
 `--current` prints a shell command without changing persisted state. A child
@@ -76,17 +100,58 @@ Shell syntax is detected from the `SHELL` environment variable; use
 Backend values are quoted literally, including shell metacharacters. JSON
 output takes precedence over `--shell`.
 
+With `--context`, shell output also carries the non-secret profile identity. A
+raw backend unsets it:
+
+```sh
+eval "$(pulumi-profile-selector --current --context --activate dev --shell posix)"
+# export PULUMI_BACKEND_URL='s3://pulumi-state-dev'
+# export PULUMI_PROFILE_SELECTOR_PROFILE='dev'
+
+eval "$(pulumi-profile-selector --current --context --new s3://other --shell posix)"
+# export PULUMI_BACKEND_URL='s3://other'
+# unset PULUMI_PROFILE_SELECTOR_PROFILE
+
+eval "$(pulumi-profile-selector --current --context --deactivate --shell posix)"
+# unset PULUMI_BACKEND_URL
+# unset PULUMI_PROFILE_SELECTOR_PROFILE
+```
+
 For integrations, prefer structured output instead of parsing shell commands:
 
 ```sh
 pulumi-profile-selector --current --activate dev --json
 # {"backend":"s3://pulumi-state-dev"}
 
+pulumi-profile-selector --current --activate dev --context --json
+# {"profile":"dev","backend":"s3://pulumi-state-dev"}
+
 pulumi-profile-selector --current --deactivate --json
 # {"backend":null}
 
 pulumi-profile-selector --show-current --json
 # {"backend":"s3://pulumi-state-dev"} (or null when inactive)
+```
+
+### Integrations
+
+`shell/pulumi.nu` (Nushell) and `shell/pulumi.bash` (Bash) both provide
+`pulumips` and `load_pulumi_profile`. They export only the
+non-secret backend URL and profile identity, keep a current-shell override as a
+snapshot of both values, and set `PULUMI_BACKEND_URL_CURRENT_SHELL=true` while an
+override is active. Deactivation through `pulumips -c -d` unsets both variables
+in the current shell; a persistent `pulumips -d` clears the saved selection.
+The current-shell marker stays true after `pulumips -c -d`, preventing a prompt
+hook from silently restoring the persisted company's selection.
+Listing, editing or deleting profiles leaves a shell snapshot untouched, so the
+`PULUMI_PROFILE_SELECTOR_PROFILE` name survives until the snapshot is replaced.
+
+Bash sources the module and calls `load_pulumi_profile` at startup or from
+`PROMPT_COMMAND`:
+
+```sh
+source /path/to/pulumi-profile-selector/shell/pulumi.bash
+PROMPT_COMMAND="load_pulumi_profile${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 ```
 
 ### Nushell integration
@@ -115,10 +180,11 @@ pulumips --help
 ```
 
 The wrapper and hook use JSON to preserve backend values exactly. A current-shell
-override is a snapshot of the backend URL, independent of saved profiles.
-Listing, editing, or deleting profiles does not change that snapshot. It survives
-prompt reloads until `pulumips -c -d` unsets it or a persistent
-activation/deactivation through `pulumips` resumes saved-state loading.
+override is a snapshot of the backend URL and profile identity, independent of
+saved profiles. Listing, editing, or deleting profiles does not change that
+snapshot. It survives prompt reloads until `pulumips -c -d` unsets it or a
+persistent activation/deactivation through `pulumips` resumes saved-state
+loading. Both hooks export metadata only.
 
 ## Profile files
 
@@ -143,9 +209,25 @@ characters or leading/trailing whitespace. Read-only commands do not create
 configuration files. Writes replace files atomically rather than truncating
 them; invalid JSON is reported instead of being silently replaced.
 
+The files hold names and backend URLs only; the schema is unchanged and stays
+compatible with earlier versions. The persistent selection stores a profile name
+(so a later backend edit is followed) or a raw backend value; deleting the active
+profile clears it. A current-shell snapshot differs by design: it keeps the
+identity and backend it was given, even if that profile is later edited or
+deleted, until another selection replaces it.
+
 These profiles are managed by this tool, not Pulumi's credentials file.
 Persistent selection takes effect through shell integration, not by modifying
 the Pulumi CLI's login state.
+
+## Secrets
+
+This tool is a non-secret backend/profile selector. It never stores, requests,
+prints, or reads Pulumi access tokens, stack-encryption passphrases, or
+`credentials.json`; there is no secret or 1Password integration in it. Both
+secret types belong to external consumers that select a profile here and then
+load the matching credential themselves. Only the backend URL and the saved
+profile name are ever exported.
 
 ## Development
 
@@ -161,8 +243,14 @@ cargo test --locked --all-targets
 cargo deny --locked check
 cargo machete
 nu --no-config-file tests/nushell.nu target/debug/pulumi-profile-selector
+bash tests/bash.sh target/debug/pulumi-profile-selector
+python3 tests/interactive.py target/debug/pulumi-profile-selector
 nix flake check
 ```
+
+The interactive check uses private PTYs and fictional profiles for both shells.
+It verifies a visible menu, current and persistent selection, and Escape/Ctrl-C
+cancellation without changing the previous selection. Every case has a deadline.
 
 The flake uses the same latest stable Rust toolchain for development and
 packaging. Its lockfile pins that toolchain and Nix packages reproducibly.

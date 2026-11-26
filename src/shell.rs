@@ -2,6 +2,13 @@ use std::{env, path::Path};
 
 use clap::ValueEnum;
 
+use crate::config::Selection;
+
+/// Non-secret saved-profile identity exported alongside the backend.
+pub const PROFILE_VAR: &str = "PULUMI_PROFILE_SELECTOR_PROFILE";
+
+const BACKEND_VAR: &str = "PULUMI_BACKEND_URL";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Shell {
     Posix,
@@ -26,30 +33,42 @@ impl Shell {
     }
 
     pub fn command(self, backend: Option<&str>) -> String {
-        let Some(backend) = backend else {
-            return match self {
-                Self::Posix => "unset PULUMI_BACKEND_URL",
-                Self::Fish => "set -e PULUMI_BACKEND_URL",
-                Self::Nu => "hide-env --ignore-errors PULUMI_BACKEND_URL",
-            }
-            .into();
-        };
+        self.assignment(BACKEND_VAR, backend)
+    }
 
-        match self {
-            Self::Posix => {
-                let quoted = backend.replace('\'', "'\\''");
-                format!("export PULUMI_BACKEND_URL='{quoted}'")
-            }
-            Self::Fish => {
-                let quoted = backend.replace('\\', "\\\\").replace('\'', "\\'");
-                format!("set -gx PULUMI_BACKEND_URL '{quoted}'")
-            }
-            Self::Nu => {
-                let quoted = backend.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("$env.PULUMI_BACKEND_URL = \"{quoted}\"")
-            }
+    /// Backend plus profile identity, leaving unnamed backends without one.
+    pub fn context_command(self, selection: &Selection) -> String {
+        [
+            self.assignment(BACKEND_VAR, selection.backend.as_deref()),
+            self.assignment(PROFILE_VAR, selection.profile.as_deref()),
+        ]
+        .join("\n")
+    }
+
+    fn assignment(self, name: &str, value: Option<&str>) -> String {
+        match (self, value) {
+            (Self::Posix, Some(value)) => format!("export {name}={}", posix_quote(value)),
+            (Self::Posix, None) => format!("unset {name}"),
+            (Self::Fish, Some(value)) => format!("set -gx {name} {}", fish_quote(value)),
+            (Self::Fish, None) => format!("set -e {name}"),
+            (Self::Nu, Some(value)) => format!("$env.{name} = {}", nu_quote(value)),
+            (Self::Nu, None) => format!("hide-env --ignore-errors {name}"),
         }
     }
+}
+
+fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn fish_quote(value: &str) -> String {
+    let quoted = value.replace('\\', "\\\\").replace('\'', "\\'");
+    format!("'{quoted}'")
+}
+
+fn nu_quote(value: &str) -> String {
+    let quoted = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{quoted}\"")
 }
 
 #[cfg(test)]
@@ -105,6 +124,70 @@ mod tests {
         assert_eq!(
             Shell::Nu.command(Some("x\\")),
             "$env.PULUMI_BACKEND_URL = \"x\\\\\""
+        );
+    }
+
+    #[test]
+    fn context_output_carries_identity_and_backend() {
+        let selection = Selection {
+            profile: Some("dev".to_owned()),
+            backend: Some("s3://state".to_owned()),
+        };
+        assert_eq!(
+            Shell::Posix.context_command(&selection),
+            "export PULUMI_BACKEND_URL='s3://state'\nexport PULUMI_PROFILE_SELECTOR_PROFILE='dev'"
+        );
+        assert_eq!(
+            Shell::Fish.context_command(&selection),
+            "set -gx PULUMI_BACKEND_URL 's3://state'\nset -gx PULUMI_PROFILE_SELECTOR_PROFILE 'dev'"
+        );
+        assert_eq!(
+            Shell::Nu.context_command(&selection),
+            "$env.PULUMI_BACKEND_URL = \"s3://state\"\n$env.PULUMI_PROFILE_SELECTOR_PROFILE = \"dev\""
+        );
+    }
+
+    #[test]
+    fn context_output_clears_unnamed_and_inactive_selections() {
+        let raw = Selection {
+            profile: None,
+            backend: Some("s3://state".to_owned()),
+        };
+        assert_eq!(
+            Shell::Posix.context_command(&raw),
+            "export PULUMI_BACKEND_URL='s3://state'\nunset PULUMI_PROFILE_SELECTOR_PROFILE"
+        );
+        assert_eq!(
+            Shell::Nu.context_command(&raw),
+            "$env.PULUMI_BACKEND_URL = \"s3://state\"\nhide-env --ignore-errors PULUMI_PROFILE_SELECTOR_PROFILE"
+        );
+        assert_eq!(
+            Shell::Fish.context_command(&Selection::default()),
+            "set -e PULUMI_BACKEND_URL\nset -e PULUMI_PROFILE_SELECTOR_PROFILE"
+        );
+    }
+
+    #[test]
+    fn context_output_quotes_identity_literally() {
+        let selection = Selection {
+            profile: Some(r#"a'b"$() `id`"#.to_owned()),
+            backend: Some("s3://x".to_owned()),
+        };
+        assert_eq!(
+            Shell::Posix
+                .context_command(&selection)
+                .lines()
+                .last()
+                .unwrap(),
+            r#"export PULUMI_PROFILE_SELECTOR_PROFILE='a'\''b"$() `id`'"#
+        );
+        assert_eq!(
+            Shell::Nu
+                .context_command(&selection)
+                .lines()
+                .last()
+                .unwrap(),
+            r#"$env.PULUMI_PROFILE_SELECTOR_PROFILE = "a'b\"$() `id`""#
         );
     }
 }

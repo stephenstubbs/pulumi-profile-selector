@@ -70,8 +70,11 @@
             version = cargoPackage.version;
             cargoLock.lockFile = ./Cargo.lock;
 
-            # tests/cli.rs shells out to `sh`
-            nativeCheckInputs = [ pkgs.bash ];
+            nativeCheckInputs = [
+              pkgs.bash
+              pkgs.nushell
+            ];
+            passthru.pulumiProfileContextVersion = 1;
 
             meta = {
               inherit (cargoPackage) description;
@@ -111,6 +114,7 @@
               pkgs.cargo-edit
               pkgs.cargo-machete
               pkgs.nushell
+              pkgs.python3
               pkgs.rust-analyzer
             ];
 
@@ -161,6 +165,37 @@
                   # nushell resolves bare ^commands from its startup PATH
                   export PATH=${package}/bin:$PATH
                   nu --no-config-file tests/nushell.nu ${package}/bin/${pname}
+                  touch $out
+                '';
+
+            bash =
+              pkgs.runCommand "${pname}-bash"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.coreutils
+                  ];
+                }
+                ''
+                  cd ${src}
+                  mkdir -p $TMPDIR/home
+                  export HOME=$TMPDIR/home
+                  bash tests/bash.sh ${package}/bin/${pname}
+                  touch $out
+                '';
+
+            interactive =
+              pkgs.runCommand "${pname}-interactive"
+                {
+                  nativeBuildInputs = [
+                    pkgs.python3
+                    pkgs.bash
+                    pkgs.nushell
+                  ];
+                }
+                ''
+                  cd ${src}
+                  python3 tests/interactive.py ${package}/bin/${pname}
                   touch $out
                 '';
           };

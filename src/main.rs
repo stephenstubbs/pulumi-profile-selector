@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::Cli;
-use config::{ProfileStore, validate_value};
+use config::{ProfileStore, Selection, validate_value};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -40,15 +40,17 @@ fn main() -> Result<()> {
             }
         }
     } else if cli.show_current {
-        let backend = store.current_backend()?;
         if cli.json {
-            print_json(backend.as_deref())?;
-        } else if let Some(backend) = backend {
+            print_json(&cli, &store.current_selection()?)?;
+        } else if cli.context {
+            let shell = cli.shell.unwrap_or_else(shell::Shell::detect);
+            println!("{}", shell.context_command(&store.current_selection()?));
+        } else if let Some(backend) = store.current_backend()? {
             println!("{backend}");
         }
     } else if cli.deactivate {
         if cli.current {
-            print_current(&cli, None)?;
+            emit(&cli, &Selection::default())?;
         } else if store.deactivate()? {
             println!("Pulumi profile deactivated");
         } else {
@@ -65,12 +67,7 @@ fn activate(cli: &Cli, store: &ProfileStore) -> Result<()> {
     if let Some(value) = &cli.new {
         validate_value(value, "Backend or profile name")?;
         if cli.current {
-            let profiles = store.read()?;
-            let backend = profiles
-                .iter()
-                .find(|profile| &profile.name == value)
-                .map_or(value.as_str(), |profile| &profile.backend);
-            print_current(cli, Some(backend))?;
+            emit(cli, &store.resolve_selection(value)?)?;
         } else {
             store.activate(value)?;
             println!("Pulumi profile activated: {value}");
@@ -100,7 +97,13 @@ fn activate(cli: &Cli, store: &ProfileStore) -> Result<()> {
     };
 
     if cli.current {
-        print_current(cli, Some(&selected.backend))?;
+        emit(
+            cli,
+            &Selection {
+                profile: Some(selected.name.clone()),
+                backend: Some(selected.backend.clone()),
+            },
+        )?;
     } else {
         store.activate(&selected.name)?;
         println!(
@@ -111,21 +114,45 @@ fn activate(cli: &Cli, store: &ProfileStore) -> Result<()> {
     Ok(())
 }
 
-fn print_current(cli: &Cli, backend: Option<&str>) -> Result<()> {
+fn emit(cli: &Cli, selection: &Selection) -> Result<()> {
     if cli.json {
-        print_json(backend)?;
+        print_json(cli, selection)?;
     } else {
         let shell = cli.shell.unwrap_or_else(shell::Shell::detect);
-        println!("{}", shell.command(backend));
+        if cli.context {
+            println!("{}", shell.context_command(selection));
+        } else {
+            println!("{}", shell.command(selection.backend.as_deref()));
+        }
     }
     Ok(())
 }
 
-fn print_json(backend: Option<&str>) -> Result<()> {
-    #[derive(serde::Serialize)]
-    struct Update<'a> {
-        backend: Option<&'a str>,
+fn print_json(cli: &Cli, selection: &Selection) -> Result<()> {
+    if cli.context {
+        #[derive(serde::Serialize)]
+        struct Context<'a> {
+            profile: Option<&'a str>,
+            backend: Option<&'a str>,
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&Context {
+                profile: selection.profile.as_deref(),
+                backend: selection.backend.as_deref(),
+            })?
+        );
+    } else {
+        #[derive(serde::Serialize)]
+        struct Update<'a> {
+            backend: Option<&'a str>,
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&Update {
+                backend: selection.backend.as_deref(),
+            })?
+        );
     }
-    println!("{}", serde_json::to_string(&Update { backend })?);
     Ok(())
 }

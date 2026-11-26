@@ -8,6 +8,7 @@ use crate::shell::Shell;
     "activate", "deactivate", "new", "add", "edit", "delete", "list", "show_current"
 ])))]
 #[command(group(ArgGroup::new("backend_output").args(["current", "show_current"]).multiple(true)))]
+#[command(group(ArgGroup::new("shell_context").args(["current", "context"]).multiple(true)))]
 pub struct Cli {
     /// Activate a saved profile without prompting
     #[arg(short, long, value_name = "PROFILE")]
@@ -45,8 +46,12 @@ pub struct Cli {
     #[arg(long)]
     pub show_current: bool,
 
-    /// Shell syntax for --current (ignored with --json)
-    #[arg(long, requires = "current", value_enum)]
+    /// Include the saved profile identity in the output
+    #[arg(long, requires = "backend_output")]
+    pub context: bool,
+
+    /// Shell syntax for --current, or --show-current with --context
+    #[arg(long, requires = "shell_context", value_enum)]
     pub shell: Option<Shell>,
 
     /// Output backend JSON with --current or --show-current
@@ -87,5 +92,30 @@ mod tests {
         assert!(Cli::try_parse_from(["pps", "-c", "-a", "dev"]).is_ok());
         assert!(Cli::try_parse_from(["pps", "-c", "--json", "-d"]).is_ok());
         assert!(Cli::try_parse_from(["pps", "--show-current", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn context_requires_a_backend_output_action() {
+        for args in [
+            vec!["pps", "--context"],
+            vec!["pps", "--context", "--list"],
+            vec!["pps", "--context", "--delete", "dev"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        for args in [
+            vec!["pps", "--context", "--current"],
+            vec!["pps", "--context", "-c", "-a", "dev"],
+            vec!["pps", "--context", "--show-current"],
+            vec!["pps", "--context", "--show-current", "--json"],
+            vec!["pps", "--context", "--show-current", "--shell", "nu"],
+            vec!["pps", "--context", "--current", "--shell", "posix"],
+        ] {
+            assert!(
+                Cli::try_parse_from(args.clone()).is_ok(),
+                "expected {args:?} to parse"
+            );
+        }
+        assert!(Cli::try_parse_from(["pps", "--show-current", "--shell", "nu"]).is_err());
     }
 }
